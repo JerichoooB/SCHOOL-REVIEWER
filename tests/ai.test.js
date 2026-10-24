@@ -8,6 +8,8 @@ import {
   selectFlashModel,
   generationSettings,
   fetchWithRetry,
+  buildEvidenceCatalog,
+  attachEvidence,
 } from "../server/aiQuiz.js";
 import { emptyData, validateData } from "../src/services/database.js";
 const evidence =
@@ -45,7 +47,18 @@ const providerResult = (q) => ({
   candidates: [
     {
       finishReason: "STOP",
-      content: { parts: [{ text: JSON.stringify({ questions: q }) }] },
+      content: {
+        parts: [
+          {
+            text: JSON.stringify({
+              questions: q.map(({ source, evidence, ...item }) => ({
+                ...item,
+                evidenceId: "E1",
+              })),
+            }),
+          },
+        ],
+      },
     },
   ],
 });
@@ -105,8 +118,8 @@ test("server calls Gemini with bounded source text and validates structured MC o
       );
       assert.match(payload.systemInstruction.parts[0].text, /untrusted/);
       assert.deepEqual(
-        JSON.parse(payload.contents[0].parts[0].text).document_sections,
-        sections,
+        JSON.parse(payload.contents[0].parts[0].text).source_excerpts,
+        [{ id: "E1", source: "Page 1", text: sections[0].text }],
       );
       return response(providerResult([question]));
     },
@@ -697,14 +710,31 @@ test("AI flashcards request direct recall questions and verify source-grounded a
         candidates: [
           {
             finishReason: "STOP",
-            content: { parts: [{ text: JSON.stringify({ cards: [card] }) }] },
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    cards: [
+                      {
+                        front: card.front,
+                        back: card.back,
+                        explanation: card.explanation,
+                        evidenceId: "E1",
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
           },
         ],
       });
     },
   });
   assert.equal(result.status, 200);
-  assert.deepEqual(result.data.cards, [card]);
+  assert.deepEqual(result.data.cards, [
+    { ...card, evidence: sections[0].text },
+  ]);
   assert.equal(result.data.questions, undefined);
   assert.throws(() =>
     validateFlashcards(
@@ -719,4 +749,58 @@ test("AI flashcards request direct recall questions and verify source-grounded a
   );
   assert.throws(() => validateFlashcards({ cards: [card, card] }, sections, 3));
   assert.throws(() => validateInput({ sections, count: 3, kind: "unknown" }));
+});
+
+test("source IDs attach exact server-owned excerpts without model quotation copying", () => {
+  const source =
+    "The “primary key” uniquely identifies each record.\nThis information is extracted from the original slide.";
+  const catalog = buildEvidenceCatalog([{ source: "Slide 7", text: source }]);
+  const grounded = attachEvidence(
+    {
+      questions: [
+        {
+          ...question,
+          evidenceId: "E1",
+          source: "Invented page",
+          evidence: "A paraphrase with different punctuation.",
+        },
+      ],
+    },
+    catalog,
+    "quiz",
+  );
+  assert.equal(grounded.questions[0].source, "Slide 7");
+  assert.equal(grounded.questions[0].evidence, source);
+  assert.equal(grounded.questions[0].evidenceId, undefined);
+  assert.throws(() =>
+    attachEvidence(
+      { questions: [{ ...question, evidenceId: "E999" }] },
+      catalog,
+      "quiz",
+    ),
+  );
+  assert.throws(() =>
+    attachEvidence({ questions: [question] }, catalog, "quiz"),
+  );
+});
+test("catalog excerpts preserve original text and source labels across long pages and PDF artifacts", () => {
+  const text =
+    "An oﬃce database uses a pri-\nmary key to identify records.\u00a0“Unique” means no repeated values. ".repeat(
+      20,
+    );
+  const sources = [
+    { source: "Page 1", text },
+    {
+      source: "Slide 2",
+      text: "A complete supporting statement appears on the next slide.",
+    },
+  ];
+  const catalog = buildEvidenceCatalog(sources);
+  assert.ok(catalog.length > 2);
+  assert.equal(new Set(catalog.map((c) => c.id)).size, catalog.length);
+  for (const c of catalog) {
+    assert.ok(sources.find((s) => s.source === c.source).text.includes(c.text));
+    assert.ok(c.text.length <= 620);
+  }
+  assert.equal(catalog.at(-1).source, "Slide 2");
 });
