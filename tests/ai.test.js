@@ -315,3 +315,77 @@ test("AI MC quizzes survive backup validation while legacy quizzes remain compat
   };
   assert.equal(validateData(legacy), legacy);
 });
+
+test("Gemini uses the compatible responseSchema format and trims deployment configuration", async () => {
+  const result = await invoke({
+    env: {
+      GEMINI_API_KEY: "  test-key  ",
+      RECALL_AI_MODEL: " models/gemini-2.5-flash-lite ",
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers["x-goog-api-key"], "test-key");
+      assert.match(url, /models\/gemini-2.5-flash-lite:generateContent$/);
+      const { generationConfig } = JSON.parse(options.body);
+      assert.equal(generationConfig.responseJsonSchema, undefined);
+      assert.equal(generationConfig.responseSchema.type, "OBJECT");
+      assert.equal(
+        generationConfig.responseSchema.additionalProperties,
+        undefined,
+      );
+      assert.equal(
+        generationConfig.responseSchema.properties.questions.type,
+        "ARRAY",
+      );
+      assert.equal(
+        generationConfig.responseSchema.properties.questions.items.properties
+          .options.items.type,
+        "STRING",
+      );
+      return response(providerResult([question]));
+    },
+  });
+  assert.equal(result.status, 200);
+});
+test("specific Gemini rejection diagnostics never echo provider secrets or document text", async () => {
+  const cases = [
+    [400, "API_KEY_INVALID", "invalid key", "API_KEY_INVALID"],
+    [403, "API_KEY_LEAKED", "reported as leaked", "API_KEY_LEAKED"],
+    [403, "SERVICE_DISABLED", "API disabled", "SERVICE_DISABLED"],
+    [403, "API_KEY_HTTP_REFERRER_BLOCKED", "blocked", "KEY_RESTRICTION"],
+    [403, "API_KEY_IP_ADDRESS_BLOCKED", "blocked", "KEY_RESTRICTION"],
+    [
+      400,
+      "FAILED_PRECONDITION",
+      "User location is not supported",
+      "REGION_UNSUPPORTED",
+    ],
+    [404, "NOT_FOUND", "Model not found", "MODEL_UNAVAILABLE"],
+    [
+      400,
+      "INVALID_ARGUMENT",
+      "Unknown name responseJsonSchema",
+      "REQUEST_REJECTED",
+    ],
+    [403, "PERMISSION_DENIED", "Not allowed", "PERMISSION_DENIED"],
+    [429, "RESOURCE_EXHAUSTED", "Quota exceeded", "QUOTA_EXCEEDED"],
+  ];
+  for (const [status, reason, message, expected] of cases) {
+    const result = await invoke({
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: message + " secret-marker " + evidence,
+              details: [{ reason, metadata: { key: "secret-marker" } }],
+            },
+          }),
+          { status },
+        ),
+    });
+    assert.equal(result.data.code, expected);
+    assert.equal(result.data.providerStatus, status);
+    assert.ok(!JSON.stringify(result.data).includes("secret-marker"));
+    assert.ok(!JSON.stringify(result.data).includes(evidence));
+    assert.notEqual(result.data.error, "Gemini rejected the request.");
+  }
+});

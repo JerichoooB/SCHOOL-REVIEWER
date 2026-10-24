@@ -9,13 +9,11 @@ export function createHandler({
       res.setHeader("Allow", "POST");
       return res.status(405).json({ error: "Use POST to generate a quiz." });
     }
-    if (!environment.GEMINI_API_KEY)
-      return res
-        .status(503)
-        .json({
-          error:
-            "AI generation is not configured. Add GEMINI_API_KEY in Vercel, then redeploy.",
-        });
+    if (!environment.GEMINI_API_KEY?.trim())
+      return res.status(503).json({
+        error:
+          "AI generation is not configured. Add GEMINI_API_KEY in Vercel, then redeploy.",
+      });
     if (
       !req.headers["content-type"]?.toLowerCase().startsWith("application/json")
     )
@@ -65,6 +63,10 @@ export function createHandler({
         error: error.status
           ? error.message
           : "Quiz generation failed. Please try again.",
+        ...(error.code ? { code: error.code } : {}),
+        ...(error.providerStatus
+          ? { providerStatus: error.providerStatus }
+          : {}),
       });
     }
   };
