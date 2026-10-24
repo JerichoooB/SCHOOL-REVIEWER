@@ -12,7 +12,8 @@ import {
 import { useStore } from "../context";
 import { PageHead, Button, Modal, Field, Empty } from "../components/UI";
 import { extractDocument } from "../services/documents";
-import { draftQuestions, grade } from "../utils/quizGrading";
+import { grade } from "../utils/quizGrading";
+import { generateAIQuiz } from "../services/aiQuiz";
 export default function Quizzes() {
   const { data, update, setError } = useStore();
   const quizzes = data.quizzes || [];
@@ -21,26 +22,57 @@ export default function Quizzes() {
     [quiz, setQuiz] = useState(null),
     [answers, setAnswers] = useState({}),
     [started, setStarted] = useState(0),
-    [result, setResult] = useState(null);
+    [result, setResult] = useState(null),
+    [material, setMaterial] = useState(null),
+    [passcode, setPasscode] = useState(""),
+    [questionCount, setQuestionCount] = useState(10),
+    [consent, setConsent] = useState(false);
   async function upload(e) {
     const file = e.target.files[0];
     e.target.value = "";
     if (!file) return;
     setBusy(true);
     try {
-      const sections = await extractDocument(file),
-        questions = draftQuestions(sections, 15);
-      if (!questions.length)
+      const sections = (await extractDocument(file)).filter((s) =>
+        s.text.trim(),
+      );
+      const length = sections.reduce((n, s) => n + s.text.length, 0);
+      if (length > 60000)
         throw new Error(
-          "No suitable sentences were found. Try a document with complete text sentences, or create a quiz manually.",
+          "This document is too long for one AI quiz. Upload a smaller chapter (up to 60,000 extracted characters).",
         );
+      setMaterial({
+        sections,
+        name: file.name.replace(/\.[^.]+$/, ""),
+        fileName: file.name,
+        length,
+      });
+      setConsent(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function generate(e) {
+    e.preventDefault();
+    if (busy || !consent) return;
+    setBusy(true);
+    try {
+      const questions = await generateAIQuiz(
+        material.sections,
+        questionCount,
+        passcode,
+      );
       setDraft({
         id: crypto.randomUUID(),
-        name: file.name.replace(/\.[^.]+$/, ""),
+        name: material.name.slice(0, 120),
         subjectId: data.subjects[0]?.id || "",
-        fileName: file.name,
+        fileName: material.fileName,
+        generator: "gemini",
         questions,
       });
+      setMaterial(null);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -140,8 +172,8 @@ export default function Quizzes() {
         </span>
         <h2>Your materials. Your next quiz.</h2>
         <p>
-          Choose a PDF or PowerPoint to create editable fill-in-the-blank
-          questions.
+          Choose a PDF or PowerPoint. Let Gemini turn the key concepts into
+          meaningful multiple-choice questions.
         </p>
         <label className={`button ${busy ? "disabled" : ""}`}>
           <Upload size={17} />
@@ -155,14 +187,95 @@ export default function Quizzes() {
           />
         </label>
         <small>
-          PDF & PPTX · Up to 20 MB / 200 pages or slides · Processed on your
-          device
+          PDF & PPTX · Up to 20 MB / 200 pages or slides · Short chapters work
+          best
         </small>
         <p className="tiny muted">
-          Local sentence-based generation, not AI. Review drafts for accuracy.
-          Image-only files require OCR; legacy .ppt files need conversion.
+          Text is extracted on your device. You choose when to send it to
+          Gemini. Free-tier limits apply. Review AI drafts for accuracy. Scanned
+          files need OCR; .ppt files need conversion.
         </p>
       </section>
+      {material && (
+        <section className="panel section-gap">
+          <h2>Ready to make a better quiz?</h2>
+          <p className="muted tiny">
+            {material.fileName} · {material.sections.length} pages/slides ·{" "}
+            {material.length.toLocaleString()} extracted characters. No content
+            has been sent to Gemini yet.
+          </p>
+          <form onSubmit={generate}>
+            <Field label="Number of questions">
+              <select
+                disabled={busy}
+                value={questionCount}
+                onChange={(e) => setQuestionCount(Number(e.target.value))}
+              >
+                {[3, 5, 10, 15].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Private generation passcode">
+              <input
+                type="password"
+                required
+                minLength={16}
+                maxLength={512}
+                autoComplete="off"
+                disabled={busy}
+                value={passcode}
+                onChange={(e) => setPasscode(e.target.value)}
+                placeholder="The private passcode you set in Vercel"
+              />
+            </Field>
+            <label className="row consent-label">
+              <input
+                type="checkbox"
+                checked={consent}
+                disabled={busy}
+                onChange={(e) => setConsent(e.target.checked)}
+              />
+              Send this document’s extracted text to Google Gemini to generate
+              my quiz.
+            </label>
+            <p className="muted tiny">
+              Google’s unpaid API terms may allow submitted content to improve
+              its products, depending on region/account. Avoid confidential
+              material. Your API key stays on the server; this passcode is kept
+              only in this tab’s memory.{" "}
+              <a
+                className="text-link"
+                href="https://ai.google.dev/gemini-api/terms"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Read Gemini terms
+              </a>
+            </p>
+            <div className="row wrap section-gap">
+              <Button
+                type="submit"
+                disabled={busy || !consent || passcode.length < 16}
+              >
+                {busy
+                  ? "Gemini is writing your questions…"
+                  : "Generate with Gemini"}
+              </Button>
+              <Button
+                secondary
+                type="button"
+                disabled={busy}
+                onClick={() => setMaterial(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </section>
+      )}
       <div className="section-title section-gap">
         <h2>
           Your quizzes <span className="count">{quizzes.length}</span>
@@ -286,17 +399,59 @@ export default function Quizzes() {
                     }
                   />
                 </Field>
-                <Field label="Accepted answers (one per line)">
-                  <textarea
-                    required
-                    value={q.accepted.join("\n")}
-                    onChange={(e) =>
-                      changeQuestion(q.id, {
-                        accepted: e.target.value.split("\n"),
-                      })
-                    }
-                  />
-                </Field>
+                {q.type === "multiple_choice" ? (
+                  <>
+                    <div className="eyebrow">FOUR ANSWER CHOICES</div>
+                    {q.options.map((option, index) => (
+                      <Field key={index} label={`Option ${index + 1}`}>
+                        <input
+                          required
+                          maxLength={500}
+                          value={option}
+                          onChange={(e) => {
+                            const options = [...q.options];
+                            options[index] = e.target.value;
+                            changeQuestion(q.id, {
+                              options,
+                              accepted:
+                                q.accepted[0] === option
+                                  ? [e.target.value]
+                                  : q.accepted,
+                            });
+                          }}
+                        />
+                      </Field>
+                    ))}
+                    <Field label="Correct answer">
+                      <select
+                        value={q.accepted[0]}
+                        onChange={(e) =>
+                          changeQuestion(q.id, { accepted: [e.target.value] })
+                        }
+                      >
+                        {q.options.map((o, index) => (
+                          <option key={index} value={o}>
+                            {index + 1}. {o}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="Accepted answers (one per line)">
+                      <textarea
+                        required
+                        value={q.accepted.join("\n")}
+                        onChange={(e) =>
+                          changeQuestion(q.id, {
+                            accepted: e.target.value.split("\n"),
+                          })
+                        }
+                      />
+                    </Field>
+                  </>
+                )}
                 <Field label="Source sentence / explanation">
                   <textarea
                     value={q.explanation}
@@ -305,6 +460,12 @@ export default function Quizzes() {
                     }
                   />
                 </Field>
+                {q.evidence && (
+                  <blockquote className="source-quote">
+                    <strong>{q.source} · Supporting quotation</strong>
+                    <p>{q.evidence}</p>
+                  </blockquote>
+                )}
               </section>
             ))}
             <div className="row wrap">
@@ -363,6 +524,11 @@ export default function Quizzes() {
                   <p>Accepted: {q.accepted.join(" / ")}</p>
                   <p className="muted">{q.explanation}</p>
                   <small className="muted">{q.source}</small>
+                  {q.evidence && (
+                    <blockquote className="source-quote">
+                      {q.evidence}
+                    </blockquote>
+                  )}
                 </div>
               ))}
               <Button onClick={() => start(quiz)}>
@@ -373,21 +539,48 @@ export default function Quizzes() {
           ) : (
             <form onSubmit={submit}>
               <p className="muted tiny">
-                Short answers use exact matching, ignoring case, extra spaces,
-                and trailing punctuation.
+                Select the best answer for each multiple-choice question. Any
+                short-answer questions use exact matching, ignoring case, extra
+                spaces, and trailing punctuation.
               </p>
-              {quiz.questions.map((q, i) => (
-                <Field key={q.id} label={`${i + 1}. ${q.prompt}`}>
-                  <input
-                    value={answers[q.id] || ""}
-                    onChange={(e) =>
-                      setAnswers({ ...answers, [q.id]: e.target.value })
-                    }
-                    placeholder="Your answer"
-                    autoComplete="off"
-                  />
-                </Field>
-              ))}
+              {quiz.questions.map((q, i) =>
+                q.type === "multiple_choice" ? (
+                  <fieldset className="quiz-question" key={q.id}>
+                    <legend>
+                      {i + 1}. {q.prompt}
+                    </legend>
+                    {q.options.map((o, index) => (
+                      <label
+                        className={`quiz-option ${answers[q.id] === o ? "selected" : ""}`}
+                        key={index}
+                      >
+                        <input
+                          type="radio"
+                          name={q.id}
+                          value={o}
+                          checked={answers[q.id] === o}
+                          onChange={() => setAnswers({ ...answers, [q.id]: o })}
+                        />
+                        <span className="option-letter">
+                          {String.fromCharCode(65 + index)}
+                        </span>
+                        <span>{o}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                ) : (
+                  <Field key={q.id} label={`${i + 1}. ${q.prompt}`}>
+                    <input
+                      value={answers[q.id] || ""}
+                      onChange={(e) =>
+                        setAnswers({ ...answers, [q.id]: e.target.value })
+                      }
+                      placeholder="Your answer"
+                      autoComplete="off"
+                    />
+                  </Field>
+                ),
+              )}
               <Button disabled={busy} type="submit">
                 Submit quiz
               </Button>

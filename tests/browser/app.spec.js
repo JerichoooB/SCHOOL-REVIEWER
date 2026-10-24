@@ -71,39 +71,75 @@ test("PowerPoint extraction, editable quiz generation, scoring and persistence",
     '<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:p><a:r><a:t>A database organizes information into structured tables for efficient retrieval.</a:t></a:r></a:p></p:sld>',
   );
   await page.goto("/quizzes");
-  await page
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "Database lesson.pptx",
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      buffer: await zip.generateAsync({ type: "nodebuffer" }),
+  await page.locator("input[type=file]").setInputFiles({
+    name: "Database lesson.pptx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    buffer: await zip.generateAsync({ type: "nodebuffer" }),
+  });
+  await expect(
+    page.getByRole("heading", { name: "Ready to make a better quiz?" }),
+  ).toBeVisible();
+  let requested = false;
+  await page.route("**/api/generate-quiz", async (route) => {
+    requested = true;
+    const body = route.request().postDataJSON();
+    expect(body.sections[0].source).toBe("Slide 1");
+    expect(body.sections[0].text).toContain("A database organizes");
+    expect(route.request().headers().authorization).toBe(
+      "Bearer test-private-passcode",
+    );
+    await route.fulfill({
+      json: {
+        questions: [
+          {
+            type: "multiple_choice",
+            prompt:
+              "Why do databases organize information into structured tables?",
+            options: [
+              "For efficient retrieval",
+              "To delete every record",
+              "To prevent all updates",
+              "To remove relationships",
+            ],
+            accepted: ["For efficient retrieval"],
+            explanation: "Structured tables enable efficient retrieval.",
+            source: "Slide 1",
+            evidence:
+              "A database organizes information into structured tables for efficient retrieval.",
+          },
+        ],
+      },
     });
+  });
+  await page
+    .getByLabel("Private generation passcode")
+    .fill("test-private-passcode");
+  await expect(
+    page.getByRole("button", { name: "Generate with Gemini" }),
+  ).toBeDisabled();
+  expect(requested).toBe(false);
+  await page.getByLabel("Send this document’s extracted text").check();
+  await page.getByRole("button", { name: "Generate with Gemini" }).click();
   await expect(
     page.getByRole("heading", { name: "Review your quiz draft" }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Question", exact: true }),
-  ).toHaveValue(/________/);
-  const answer = await page
-    .getByRole("textbox", {
-      name: "Accepted answers (one per line)",
-      exact: true,
-    })
-    .inputValue();
-  await expect(
-    page.getByRole("textbox", {
-      name: "Source sentence / explanation",
-      exact: true,
-    }),
-  ).toHaveValue(/A database organizes/);
+  ).toHaveValue(
+    "Why do databases organize information into structured tables?",
+  );
+  await expect(page.getByLabel("Option 1", { exact: true })).toHaveValue(
+    "For efficient retrieval",
+  );
+  await expect(page.getByText("Slide 1 · Supporting quotation")).toBeVisible();
   await page.getByRole("button", { name: "Save reviewed quiz" }).click();
   await expect(
     page.getByRole("heading", { name: "Review your quiz draft" }),
   ).not.toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Start quiz" }).click();
-  await page.getByPlaceholder("Your answer").fill(answer.toUpperCase());
+  await page.getByLabel("For efficient retrieval", { exact: false }).check();
   await page.getByRole("button", { name: "Submit quiz" }).click();
   await expect(page.getByRole("heading", { name: "100%" })).toBeVisible();
   await page.getByLabel("Close dialog").click();
@@ -162,21 +198,39 @@ test("PDF extraction makes grounded questions", async ({ page }) => {
     .map((n) => String(n).padStart(10, "0") + " 00000 n \n")
     .join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   await page.goto("/quizzes");
-  await page
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "lesson.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from(pdf),
+  await page.locator("input[type=file]").setInputFiles({
+    name: "lesson.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from(pdf),
+  });
+  await expect(
+    page.getByRole("heading", { name: "Ready to make a better quiz?" }),
+  ).toBeVisible();
+  expect(
+    await page.getByLabel("Send this document’s extracted text").isChecked(),
+  ).toBe(false);
+  await page.route("**/api/generate-quiz", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.sections[0].text.trim()).toBe(text);
+    expect(body.sections[0].source).toBe("Page 1");
+    await route.fulfill({
+      status: 503,
+      json: {
+        error:
+          "AI generation is not configured. Add GEMINI_API_KEY in Vercel, then redeploy.",
+      },
     });
+  });
+  await page
+    .getByLabel("Private generation passcode")
+    .fill("test-private-passcode");
+  await page.getByLabel("Send this document’s extracted text").check();
+  await page.getByRole("button", { name: "Generate with Gemini" }).click();
+  await expect(page.getByRole("alert")).toContainText("Add GEMINI_API_KEY");
   await expect(
     page.getByRole("heading", { name: "Review your quiz draft" }),
-  ).toBeVisible();
+  ).not.toBeVisible();
   await expect(
-    page.getByRole("textbox", {
-      name: "Source sentence / explanation",
-      exact: true,
-    }),
-  ).toHaveValue(text);
-  await expect(page.getByText("QUESTION 1 · Page 1")).toBeVisible();
+    page.getByRole("button", { name: "Generate with Gemini" }),
+  ).toBeEnabled();
 });

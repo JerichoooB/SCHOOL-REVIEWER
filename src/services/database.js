@@ -87,6 +87,30 @@ export function validateData(data) {
         typeof x.source !== "string"
       )
         throw new Error("Invalid quiz question.");
+      if (
+        x.type !== undefined &&
+        !["short_answer", "multiple_choice"].includes(x.type)
+      )
+        throw new Error("Unsupported quiz question type.");
+      if (
+        x.evidence !== undefined &&
+        (typeof x.evidence !== "string" || x.evidence.length > 2000)
+      )
+        throw new Error("Invalid source quotation.");
+      if (
+        x.type === "multiple_choice" &&
+        (!Array.isArray(x.options) ||
+          x.options.length !== 4 ||
+          !x.options.every((o) => text(o, 500)) ||
+          new Set(
+            x.options.map((o) => o.trim().toLowerCase().replace(/\s+/g, " ")),
+          ).size !== 4 ||
+          x.accepted.length !== 1 ||
+          !x.options.includes(x.accepted[0]))
+      )
+        throw new Error(
+          "Multiple-choice questions need four distinct options and one correct answer.",
+        );
       ids.add(x.id);
     }
   }

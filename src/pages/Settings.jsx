@@ -72,7 +72,8 @@ export default function Settings() {
         <h2>Your data, your control</h2>
         <p className="muted">
           Study data is stored in this browser. Export regular backups to keep
-          it safe. Files are processed locally and are not uploaded to a server.
+          it safe. PDF/PPTX text is extracted locally; AI quiz generation sends
+          extracted text to Google Gemini only after you confirm.
         </p>
         <div className="row wrap">
           <Button
@@ -122,7 +123,7 @@ export default function Settings() {
         )}
       </section>
       <p className="muted tiny">
-        Recall v1 · No account required · No external AI service
+        Recall v1 · Local study data · Optional Gemini quiz generation
       </p>
     </>
   );

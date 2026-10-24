@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import "fake-indexeddb/auto";
 import { schedule, isDue } from "../src/utils/spacedRepetition.js";
-import { grade, draftQuestions } from "../src/utils/quizGrading.js";
+import { grade } from "../src/utils/quizGrading.js";
 import {
   emptyData,
   validateData,
@@ -47,18 +47,6 @@ test("answer grading normalizes exact text, not semantic guesses", () => {
   assert.ok(grade("TCP", ["transmission control protocol", "tcp"]));
   assert.ok(!grade("networking", ["network"]));
   assert.ok(!grade("", ["answer"]));
-});
-test("document drafts are grounded in source text and keep provenance", () => {
-  const sentence =
-    "A database organizes information into structured tables for efficient retrieval.";
-  const qs = draftQuestions([{ source: "Page 3", text: sentence }]);
-  assert.equal(qs.length, 1);
-  assert.equal(qs[0].prompt.replace("________", qs[0].accepted[0]), sentence);
-  assert.equal(qs[0].source, "Page 3");
-  assert.equal(
-    draftQuestions([{ source: "Slide 1", text: "Intro" }]).length,
-    0,
-  );
 });
 test("backup validation rejects dangling relationships and invalid records", () => {
   const d = {
