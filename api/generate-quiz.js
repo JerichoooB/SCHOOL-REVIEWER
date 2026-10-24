@@ -49,7 +49,7 @@ export function createHandler({
     try {
       const questions = await generateQuestions(input, {
         apiKey: environment.GEMINI_API_KEY,
-        model: environment.RECALL_AI_MODEL || "gemini-2.5-flash-lite",
+        model: environment.RECALL_AI_MODEL,
         fetchImpl,
       });
       return res.status(200).json({ questions });

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHandler } from "../api/generate-quiz.js";
-import { validateQuestions, validateInput } from "../server/aiQuiz.js";
+import {
+  validateQuestions,
+  validateInput,
+  selectFlashModel,
+} from "../server/aiQuiz.js";
 import { emptyData, validateData } from "../src/services/database.js";
 const evidence =
   "A database organizes information into structured tables for efficient retrieval.";
@@ -27,6 +31,7 @@ const question = {
 };
 const environment = {
   GEMINI_API_KEY: "test-provider-key-not-real",
+  RECALL_AI_MODEL: "gemini-2.5-flash-lite",
 };
 const response = (payload) =>
   new Response(JSON.stringify(payload), {
@@ -388,4 +393,91 @@ test("specific Gemini rejection diagnostics never echo provider secrets or docum
     assert.ok(!JSON.stringify(result.data).includes(evidence));
     assert.notEqual(result.data.error, "Gemini rejected the request.");
   }
+});
+
+test("default generation discovers a supported Flash model instead of pinning a retired ID", async () => {
+  const calls = [];
+  const result = await invoke({
+    env: { GEMINI_API_KEY: environment.GEMINI_API_KEY },
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      assert.equal(
+        options.headers["x-goog-api-key"],
+        environment.GEMINI_API_KEY,
+      );
+      if (options.method === "GET")
+        return response({
+          models: [
+            {
+              name: "models/gemini-3.1-pro",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-3.1-flash-image",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-3.1-flash-lite",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+        });
+      assert.match(url, /models\/gemini-3.1-flash-lite:generateContent$/);
+      return response(providerResult([question]));
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /\/models\?pageSize=1000$/);
+});
+test("automatic selection prefers stable Flash text models, respects supported methods and excludes other families", () => {
+  const model = (name) => ({
+    name: "models/" + name,
+    supportedGenerationMethods: ["generateContent"],
+  });
+  assert.equal(
+    selectFlashModel([
+      model("gemini-4.0-flash-preview"),
+      model("gemini-3.1-flash"),
+      model("gemini-3.1-flash-lite"),
+      model("gemini-2.5-flash-lite"),
+    ]),
+    "gemini-3.1-flash-lite",
+  );
+  assert.equal(
+    selectFlashModel([
+      model("gemini-3.1-pro"),
+      model("gemini-3.1-flash-image"),
+      {
+        name: "models/gemini-3.1-flash",
+        supportedGenerationMethods: ["embedContent"],
+      },
+    ]),
+    undefined,
+  );
+});
+test("model-list errors and empty results stop before generation with actionable diagnostics", async () => {
+  let calls = 0;
+  const env = {
+    GEMINI_API_KEY: environment.GEMINI_API_KEY,
+    RECALL_AI_MODEL: "auto",
+  };
+  const result = await invoke({
+    env,
+    fetchImpl: async () => {
+      calls++;
+      return response({ models: [] });
+    },
+  });
+  assert.equal(result.data.code, "NO_AVAILABLE_MODEL");
+  assert.equal(calls, 1);
+  const denied = await invoke({
+    env,
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({ error: { details: [{ reason: "API_KEY_INVALID" }] } }),
+        { status: 400 },
+      ),
+  });
+  assert.equal(denied.data.code, "API_KEY_INVALID");
 });

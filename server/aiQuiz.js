@@ -204,7 +204,7 @@ export async function providerError(response, model) {
       "Gemini reports that this request’s region is unsupported. Check Google’s supported regions and the Vercel function region for your account.";
   } else if (response.status === 404) {
     code = "MODEL_UNAVAILABLE";
-    text = `Gemini model ${model} was not found or does not support generation for this API key. Set RECALL_AI_MODEL in Vercel to an available Gemini text model shown in Google AI Studio, then redeploy.`;
+    text = `Gemini model ${model} was not found or does not support generation for this API key. Remove RECALL_AI_MODEL in Vercel to enable automatic Flash model selection, or set it to an available text model shown in Google AI Studio, then redeploy.`;
   } else if (response.status === 400) {
     status = 502;
     code = "REQUEST_REJECTED";
@@ -224,16 +224,70 @@ export async function providerError(response, model) {
     providerStatus: response.status,
   });
 }
+export function selectFlashModel(models) {
+  const candidates = (Array.isArray(models) ? models : [])
+    .filter(
+      (m) =>
+        m &&
+        typeof m.name === "string" &&
+        Array.isArray(m.supportedGenerationMethods) &&
+        m.supportedGenerationMethods.includes("generateContent"),
+    )
+    .map((m) => m.name.replace(/^models\//, ""))
+    .filter(
+      (name) =>
+        /^gemini-\d+(?:\.\d+)?-flash(?:-lite)?(?:-\d{3}|-(?:preview|exp)(?:-[0-9-]+)?)?$/.test(
+          name,
+        ) || /^gemini-flash(?:-lite)?-latest$/.test(name),
+    );
+  const rank = (name) => {
+    const version = Number(name.match(/^gemini-(\d+(?:\.\d+)?)/)?.[1] || 0);
+    return [
+      /(preview|exp)/.test(name) ? 0 : 1,
+      version,
+      name.includes("lite") ? 1 : 0,
+    ];
+  };
+  return candidates.sort((a, b) => {
+    const x = rank(a),
+      y = rank(b);
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return y[i] - x[i];
+    return a.localeCompare(b);
+  })[0];
+}
+export async function discoverModel(apiKey, fetchImpl) {
+  const response = await fetchImpl(
+    "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+    {
+      method: "GET",
+      headers: { "x-goog-api-key": apiKey },
+      signal: AbortSignal.timeout(8000),
+    },
+  );
+  if (!response.ok) throw await providerError(response, "configured");
+  const payload = await response.json();
+  const selected = selectFlashModel(payload.models);
+  if (!selected)
+    throw Object.assign(
+      new Error(
+        "Google lists no compatible Gemini Flash text model for this API key. Check available models in Google AI Studio, or set RECALL_AI_MODEL in Vercel to an available structured-output text model and redeploy.",
+      ),
+      { status: 503, code: "NO_AVAILABLE_MODEL" },
+    );
+  return selected;
+}
 export async function generateQuestions(
   { sections, count },
-  { apiKey, model = "gemini-2.5-flash-lite", fetchImpl = fetch },
+  { apiKey, model, fetchImpl = fetch },
 ) {
   apiKey = apiKey.trim();
-  model = model.trim().replace(/^models\//, "");
+  model = (model || "").trim().replace(/^models\//, "");
+  if (!model || model.toLowerCase() === "auto")
+    model = await discoverModel(apiKey, fetchImpl);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}$/.test(model))
     throw Object.assign(
       new Error(
-        "RECALL_AI_MODEL must be a Gemini model ID, such as gemini-2.5-flash-lite. Fix it in Vercel and redeploy.",
+        "RECALL_AI_MODEL must be a Gemini model ID. Remove the variable to select an available Flash model automatically, then redeploy.",
       ),
       { status: 503, code: "MODEL_INVALID" },
     );
