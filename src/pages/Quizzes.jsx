@@ -24,7 +24,6 @@ export default function Quizzes() {
     [started, setStarted] = useState(0),
     [result, setResult] = useState(null),
     [material, setMaterial] = useState(null),
-    [passcode, setPasscode] = useState(""),
     [questionCount, setQuestionCount] = useState(10),
     [consent, setConsent] = useState(false);
   async function upload(e) {
@@ -59,11 +58,7 @@ export default function Quizzes() {
     if (busy || !consent) return;
     setBusy(true);
     try {
-      const questions = await generateAIQuiz(
-        material.sections,
-        questionCount,
-        passcode,
-      );
+      const questions = await generateAIQuiz(material.sections, questionCount);
       setDraft({
         id: crypto.randomUUID(),
         name: material.name.slice(0, 120),
@@ -218,19 +213,6 @@ export default function Quizzes() {
                 ))}
               </select>
             </Field>
-            <Field label="Private generation passcode">
-              <input
-                type="password"
-                required
-                minLength={16}
-                maxLength={512}
-                autoComplete="off"
-                disabled={busy}
-                value={passcode}
-                onChange={(e) => setPasscode(e.target.value)}
-                placeholder="The private passcode you set in Vercel"
-              />
-            </Field>
             <label className="row consent-label">
               <input
                 type="checkbox"
@@ -244,8 +226,7 @@ export default function Quizzes() {
             <p className="muted tiny">
               Google’s unpaid API terms may allow submitted content to improve
               its products, depending on region/account. Avoid confidential
-              material. Your API key stays on the server; this passcode is kept
-              only in this tab’s memory.{" "}
+              material. Your API key stays on the server.{" "}
               <a
                 className="text-link"
                 href="https://ai.google.dev/gemini-api/terms"
@@ -256,10 +237,7 @@ export default function Quizzes() {
               </a>
             </p>
             <div className="row wrap section-gap">
-              <Button
-                type="submit"
-                disabled={busy || !consent || passcode.length < 16}
-              >
+              <Button type="submit" disabled={busy || !consent}>
                 {busy
                   ? "Gemini is writing your questions…"
                   : "Generate with Gemini"}

@@ -1,4 +1,4 @@
-export async function generateAIQuiz(sections, count, passcode) {
+export async function generateAIQuiz(sections, count) {
   if (!navigator.onLine)
     throw new Error(
       "Connect to the internet to generate an AI quiz. Saved quizzes still work offline.",
@@ -9,7 +9,6 @@ export async function generateAIQuiz(sections, count, passcode) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${passcode}`,
       },
       body: JSON.stringify({ sections, count }),
       signal: AbortSignal.timeout(55000),

@@ -27,7 +27,6 @@ const question = {
 };
 const environment = {
   GEMINI_API_KEY: "test-provider-key-not-real",
-  RECALL_QUIZ_ACCESS_CODE: "test-private-passcode-not-real",
 };
 const response = (payload) =>
   new Response(JSON.stringify(payload), {
@@ -69,7 +68,6 @@ async function invoke({
     {
       method,
       headers: {
-        authorization: `Bearer ${environment.RECALL_QUIZ_ACCESS_CODE}`,
         "content-type": "application/json",
         ...headers,
       },
@@ -105,24 +103,19 @@ test("server calls Gemini with bounded source text and validates structured MC o
       return response(providerResult([question]));
     },
   });
-  assert.ok(called);
+  assert.ok(called); // No client credentials are required to generate.
   assert.equal(result.status, 200);
   assert.equal(result.data.questions[0].type, "multiple_choice");
   assert.deepEqual(result.data.questions[0].accepted, [question.answer]);
   assert.equal(result.headers["Cache-Control"], "no-store");
   assert.ok(!JSON.stringify(result.data).includes(environment.GEMINI_API_KEY));
 });
-test("unauthorized, unconfigured and invalid requests never call Gemini", async () => {
+test("unconfigured and invalid requests never call Gemini", async () => {
   const fetchImpl = () => {
     throw new Error("must not call provider");
   };
   assert.equal((await invoke({ method: "GET", fetchImpl })).status, 405);
   assert.equal((await invoke({ env: {}, fetchImpl })).status, 503);
-  assert.equal(
-    (await invoke({ headers: { authorization: "Bearer wrong" }, fetchImpl }))
-      .status,
-    401,
-  );
   assert.equal(
     (await invoke({ headers: { "content-type": "text/plain" }, fetchImpl }))
       .status,

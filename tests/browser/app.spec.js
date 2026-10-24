@@ -86,9 +86,7 @@ test("PowerPoint extraction, editable quiz generation, scoring and persistence",
     const body = route.request().postDataJSON();
     expect(body.sections[0].source).toBe("Slide 1");
     expect(body.sections[0].text).toContain("A database organizes");
-    expect(route.request().headers().authorization).toBe(
-      "Bearer test-private-passcode",
-    );
+    expect(route.request().headers().authorization).toBeUndefined();
     await route.fulfill({
       json: {
         questions: [
@@ -112,9 +110,7 @@ test("PowerPoint extraction, editable quiz generation, scoring and persistence",
       },
     });
   });
-  await page
-    .getByLabel("Private generation passcode")
-    .fill("test-private-passcode");
+  await expect(page.getByLabel("Private generation passcode")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Generate with Gemini" }),
   ).toBeDisabled();
@@ -221,9 +217,7 @@ test("PDF extraction makes grounded questions", async ({ page }) => {
       },
     });
   });
-  await page
-    .getByLabel("Private generation passcode")
-    .fill("test-private-passcode");
+  await expect(page.getByLabel("Private generation passcode")).toHaveCount(0);
   await page.getByLabel("Send this document’s extracted text").check();
   await page.getByRole("button", { name: "Generate with Gemini" }).click();
   await expect(page.getByRole("alert")).toContainText("Add GEMINI_API_KEY");

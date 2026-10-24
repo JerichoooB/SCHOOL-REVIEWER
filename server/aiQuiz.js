@@ -1,19 +1,7 @@
-import { timingSafeEqual, createHash } from "node:crypto";
 export const MAX_TEXT = 60000;
 const clean = (value) => value.replace(/\s+/g, " ").trim();
 const bounded = (value, max) =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max;
-export function authenticated(header, secret) {
-  if (
-    !secret ||
-    secret.length < 16 ||
-    typeof header !== "string" ||
-    header.length > 1024
-  )
-    return false;
-  const digest = (text) => createHash("sha256").update(text).digest();
-  return timingSafeEqual(digest(header), digest(`Bearer ${secret}`));
-}
 export function validateInput(body) {
   if (
     !body ||

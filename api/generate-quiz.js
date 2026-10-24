@@ -1,8 +1,4 @@
-import {
-  authenticated,
-  validateInput,
-  generateQuestions,
-} from "../server/aiQuiz.js";
+import { validateInput, generateQuestions } from "../server/aiQuiz.js";
 export function createHandler({
   environment = process.env,
   fetchImpl = fetch,
@@ -13,26 +9,13 @@ export function createHandler({
       res.setHeader("Allow", "POST");
       return res.status(405).json({ error: "Use POST to generate a quiz." });
     }
-    if (
-      !environment.GEMINI_API_KEY ||
-      !environment.RECALL_QUIZ_ACCESS_CODE ||
-      environment.RECALL_QUIZ_ACCESS_CODE.length < 16 ||
-      environment.RECALL_QUIZ_ACCESS_CODE.length > 512
-    )
-      return res.status(503).json({
-        error:
-          "AI generation is not configured. Add GEMINI_API_KEY and a RECALL_QUIZ_ACCESS_CODE of at least 16 characters in Vercel, then redeploy.",
-      });
-    if (
-      !authenticated(
-        req.headers.authorization,
-        environment.RECALL_QUIZ_ACCESS_CODE,
-      )
-    )
-      return res.status(401).json({
-        error:
-          "Incorrect generation passcode. Enter the private passcode configured for this app.",
-      });
+    if (!environment.GEMINI_API_KEY)
+      return res
+        .status(503)
+        .json({
+          error:
+            "AI generation is not configured. Add GEMINI_API_KEY in Vercel, then redeploy.",
+        });
     if (
       !req.headers["content-type"]?.toLowerCase().startsWith("application/json")
     )
