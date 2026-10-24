@@ -64,6 +64,7 @@ export function createHandler({
           ? error.message
           : "Quiz generation failed. Please try again.",
         ...(error.code ? { code: error.code } : {}),
+        ...(error.attempts ? { attempts: error.attempts } : {}),
         ...(error.providerStatus
           ? { providerStatus: error.providerStatus }
           : {}),

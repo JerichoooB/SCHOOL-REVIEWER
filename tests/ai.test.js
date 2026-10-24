@@ -6,6 +6,7 @@ import {
   validateInput,
   selectFlashModel,
   generationSettings,
+  fetchWithRetry,
 } from "../server/aiQuiz.js";
 import { emptyData, validateData } from "../src/services/database.js";
 const evidence =
@@ -543,4 +544,128 @@ test("warm requests reuse discovery while different API keys have separate model
     200,
   );
   assert.equal(lookups, 2);
+});
+
+test("temporary provider failures retry once and can recover a real validated quiz", async () => {
+  let calls = 0;
+  const result = await invoke({
+    fetchImpl: async () => {
+      calls++;
+      return calls === 1
+        ? new Response(JSON.stringify({ error: { message: "Overloaded" } }), {
+            status: 503,
+          })
+        : response(providerResult([question]));
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.status, 200);
+  assert.equal(result.data.questions[0].accepted[0], question.answer);
+});
+test("transient retry stays bounded and persistent errors expose safe status and attempt count", async () => {
+  let calls = 0;
+  const result = await invoke({
+    fetchImpl: async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "private-provider-message " + environment.GEMINI_API_KEY,
+          },
+        }),
+        { status: 503 },
+      );
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.status, 503);
+  assert.equal(result.data.providerStatus, 503);
+  assert.equal(result.data.attempts, 2);
+  assert.match(result.data.error, /HTTP 503/);
+  assert.match(result.data.error, /retry also failed/);
+  assert.ok(!JSON.stringify(result.data).includes(environment.GEMINI_API_KEY));
+});
+test("retry observes provider retry-after and the original time budget", async () => {
+  for (const [header, advance] of [
+    ["30", 0],
+    [null, 119000],
+  ]) {
+    let calls = 0,
+      now = 0;
+    const delays = [];
+    const result = await fetchWithRetry(
+      "https://example.test",
+      {},
+      {
+        now: () => now,
+        wait: async (n) => delays.push(n),
+        fetchImpl: async () => {
+          calls++;
+          now += advance;
+          return new Response("{}", {
+            status: 503,
+            headers: header ? { "retry-after": header } : {},
+          });
+        },
+      },
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.attempts, 1);
+    assert.deepEqual(delays, []);
+  }
+  let calls = 0;
+  const delays = [];
+  const result = await fetchWithRetry(
+    "https://example.test",
+    {},
+    {
+      wait: async (n) => delays.push(n),
+      fetchImpl: async () => {
+        calls++;
+        return new Response("{}", { status: calls === 1 ? 502 : 200 });
+      },
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(delays, [750]);
+});
+test("quota errors, invalid requests and ambiguous network failures are not replayed", async () => {
+  for (const status of [400, 401, 403, 404, 429]) {
+    let calls = 0;
+    const result = await fetchWithRetry(
+      "https://example.test",
+      {},
+      {
+        wait: async () => {
+          throw new Error("must not wait");
+        },
+        fetchImpl: async () => {
+          calls++;
+          return new Response("{}", { status });
+        },
+      },
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.response.status, status);
+  }
+  let calls = 0;
+  await assert.rejects(
+    fetchWithRetry(
+      "https://example.test",
+      {},
+      {
+        fetchImpl: async () => {
+          calls++;
+          throw new TypeError("network error");
+        },
+      },
+    ),
+  );
+  assert.equal(calls, 1);
+  const result = await invoke({
+    fetchImpl: async () => new Response("{}", { status: 418 }),
+  });
+  assert.equal(result.data.code, "UNEXPECTED_PROVIDER_RESPONSE");
+  assert.match(result.data.error, /HTTP 418/);
 });
