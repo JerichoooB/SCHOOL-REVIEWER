@@ -52,12 +52,16 @@ export function createHandler({
         model: environment.RECALL_AI_MODEL,
         fetchImpl,
       });
-      return res.status(200).json({ questions });
+      return res
+        .status(200)
+        .json(
+          input.kind === "flashcards" ? { cards: questions } : { questions },
+        );
     } catch (error) {
       if (error.name === "TimeoutError" || error.name === "AbortError")
         return res.status(504).json({
           error:
-            "Gemini did not finish within the allowed time. No quiz was saved. Please try again later.",
+            "Gemini did not finish within the allowed time. No study draft was saved. Please try again later.",
         });
       return res.status(error.status || 502).json({
         error: error.status

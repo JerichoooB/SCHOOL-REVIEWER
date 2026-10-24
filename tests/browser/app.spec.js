@@ -28,6 +28,7 @@ test("subjects, decks, cards, reviews, search, mobile navigation, and persistenc
   await page.getByLabel("Front · question").fill("What does TCP provide?");
   await page.getByLabel("Back · answer").fill("Reliable ordered delivery");
   await page.getByRole("button", { name: "Save flashcard" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "What does TCP provide?" }),
@@ -140,6 +141,8 @@ test("PowerPoint extraction, editable quiz generation, scoring and persistence",
   await expect(page.getByRole("heading", { name: "100%" })).toBeVisible();
   await page.getByLabel("Close dialog").click();
   await expect(page.getByText("1 questions · 1 attempts")).toBeVisible();
+  await page.getByText("Attempt history", { exact: true }).click();
+  await expect(page.locator(".attempt-history")).toContainText("100%");
 });
 test("production app caches for offline navigation and includes install manifest", async ({
   page,
@@ -226,5 +229,194 @@ test("PDF extraction makes grounded questions", async ({ page }) => {
   ).not.toBeVisible();
   await expect(
     page.getByRole("button", { name: "Generate with Gemini" }),
+  ).toBeEnabled();
+});
+
+test("AI flashcards can be reviewed, deduplicated, saved, studied and restored on mobile", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: /ready to learn/ }),
+  ).toBeVisible();
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const r = indexedDB.open("recall", 1);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("state", "readwrite");
+      tx.objectStore("state").put(
+        {
+          version: 1,
+          subjects: [
+            {
+              id: "subject",
+              name: "Databases",
+              description: "",
+              color: "#8b5cf6",
+            },
+          ],
+          decks: [
+            { id: "deck", name: "Database essentials", subjectId: "subject" },
+          ],
+          cards: [
+            {
+              id: "existing",
+              deckId: "deck",
+              front: "What is a database?",
+              back: "An organized collection of information.",
+              explanation: "",
+              tags: "",
+              difficulty: "Medium",
+              due: Date.now() + 6 * 86400000,
+              ease: 2.5,
+              repetitions: 2,
+              interval: 6,
+              history: [{ at: Date.now(), rating: "good" }],
+            },
+          ],
+          quizzes: [],
+          attempts: [],
+        },
+        "data",
+      );
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.goto("/flashcards?deck=deck");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Generate with AI" }).click();
+  const zip = new JSZip();
+  zip.file(
+    "ppt/slides/slide1.xml",
+    '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:p><a:r><a:t>A database organizes information into structured tables for efficient retrieval.</a:t></a:r></a:p></p:sld>',
+  );
+  await page
+    .getByRole("dialog")
+    .locator("input[type=file]")
+    .setInputFiles({
+      name: "Databases.pptx",
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      buffer: await zip.generateAsync({ type: "nodebuffer" }),
+    });
+  await page.getByLabel("Number of flashcards").selectOption("3");
+  await expect(
+    page.getByRole("button", { name: "Generate flashcards", exact: true }),
+  ).toBeDisabled();
+  let generationCalls = 0;
+  await page.route("**/api/generate-quiz", async (route) => {
+    generationCalls++;
+    if (generationCalls === 1) {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Gemini is busy. Please try again." },
+      });
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(body.kind).toBe("flashcards");
+    expect(body.sections[0].source).toBe("Slide 1");
+    await route.fulfill({
+      json: {
+        cards: [
+          {
+            front: "What is a database?",
+            back: "An organized collection of information.",
+            explanation: "It structures information.",
+            source: "Slide 1",
+            evidence:
+              "A database organizes information into structured tables for efficient retrieval.",
+          },
+          {
+            front: "Why use structured tables?",
+            back: "To organize information for efficient retrieval.",
+            explanation: "Tables give information a retrievable structure.",
+            source: "Slide 1",
+            evidence:
+              "A database organizes information into structured tables for efficient retrieval.",
+          },
+          {
+            front: "What is retrieval?",
+            back: "Accessing stored information.",
+            explanation: "Retrieval accesses information.",
+            source: "Slide 1",
+            evidence:
+              "A database organizes information into structured tables for efficient retrieval.",
+          },
+        ],
+      },
+    });
+  });
+  await page.getByLabel("Send this document’s extracted text").check();
+  await page
+    .getByRole("button", { name: "Generate flashcards", exact: true })
+    .click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+    "Gemini is busy",
+  );
+  await page
+    .getByRole("button", { name: "Generate flashcards", exact: true })
+    .click();
+  await expect(page.getByLabel("Card 2 answer")).toHaveValue(
+    "To organize information for efficient retrieval.",
+  );
+  await page
+    .getByLabel("Card 2 question")
+    .fill("Why are structured tables useful?");
+  await page.getByLabel("Remove draft card 3").click();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
+  await page.screenshot({
+    path: "/tmp/recall-ai-flashcards-mobile.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Save reviewed flashcards" }).click();
+  await expect(page.getByRole("status")).toContainText("1 flashcard added");
+  await expect(page.getByRole("status")).toContainText("1 duplicate skipped");
+  await page
+    .getByRole("button", { name: "Back to your deck", exact: true })
+    .click();
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Why are structured tables useful?" }),
+  ).toBeVisible();
+  const original = await page.evaluate(async () => {
+    const db = await new Promise((resolve) => {
+      const r = indexedDB.open("recall");
+      r.onsuccess = () => resolve(r.result);
+    });
+    return new Promise((resolve) => {
+      const r = db.transaction("state").objectStore("state").get("data");
+      r.onsuccess = () => {
+        resolve(r.result.cards.find((c) => c.id === "existing"));
+        db.close();
+      };
+    });
+  });
+  expect(original.interval).toBe(6);
+  expect(original.history).toHaveLength(1);
+  await page.getByRole("button", { name: "Review due cards" }).click();
+  await page.getByRole("button", { name: "Reveal answer" }).click();
+  await expect(page.getByText("Slide 1 · Databases.pptx")).toBeVisible();
+  await page.getByRole("button", { name: /^again/ }).click();
+  await expect(page.getByText("You reviewed 1 cards.")).toBeVisible();
+  await page.keyboard.press("1");
+  await expect(page.getByText("You reviewed 1 cards.")).toBeVisible();
+  await page.getByRole("button", { name: "Back to your decks" }).click();
+  await expect(
+    page.getByRole("button", { name: "Review due cards" }),
+  ).toBeDisabled();
+  await page.clock.fastForward(91000);
+  await expect(
+    page.getByRole("button", { name: "Review due cards" }),
   ).toBeEnabled();
 });

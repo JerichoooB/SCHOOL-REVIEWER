@@ -328,6 +328,34 @@ export default function Quizzes() {
                 {q.questions.length} questions · {attempts.length} attempts
               </p>
               {q.fileName && <p className="tiny muted">Source: {q.fileName}</p>}
+              {!!attempts.length && (
+                <details className="attempt-history">
+                  <summary>Attempt history</summary>
+                  <ol>
+                    {[...attempts]
+                      .sort((a, b) => b.at - a.at)
+                      .slice(0, 10)
+                      .map((a) => (
+                        <li key={a.id}>
+                          <span>
+                            {new Date(a.at).toLocaleString(undefined, {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })}
+                          </span>
+                          <strong>{a.score}%</strong>
+                          <small>
+                            {a.correct}/{a.total} correct · {a.seconds}s
+                          </small>
+                        </li>
+                      ))}
+                  </ol>
+                  <p className="tiny muted">
+                    Showing the latest {Math.min(attempts.length, 10)} attempts.
+                    Previous scores are preserved when you edit a quiz.
+                  </p>
+                </details>
+              )}
               <Button onClick={() => start(q)}>
                 Start quiz <ArrowRight size={16} />
               </Button>

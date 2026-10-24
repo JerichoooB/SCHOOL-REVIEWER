@@ -13,14 +13,19 @@ import {
   RotateCcw,
   Check,
   BookOpen,
+  Sparkles,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useStore } from "../context";
 import { Button, Empty, Modal, Field, PageHead } from "../components/UI";
 import { schedule, isDue } from "../utils/spacedRepetition";
 import { download } from "../services/database";
+import AIFlashcards from "../components/AIFlashcards";
+import { useReviewClock } from "../hooks/useReviewClock";
 export default function Flashcards() {
   const { data, update, prefs, setError } = useStore();
+  const now = useReviewClock();
+  const [generating, setGenerating] = useState(false);
   const [params, setParams] = useSearchParams();
   const deck = data.decks.find((d) => d.id === params.get("deck"));
   const [editing, setEditing] = useState(null),
@@ -106,7 +111,7 @@ export default function Flashcards() {
   }
   function start(d, dueOnly) {
     let list = data.cards
-      .filter((c) => c.deckId === d.id && (!dueOnly || isDue(c)))
+      .filter((c) => c.deckId === d.id && (!dueOnly || isDue(c, now)))
       .map((c) => c.id);
     if (prefs.shuffle)
       list = list
@@ -119,7 +124,7 @@ export default function Flashcards() {
     setFlipped(false);
   }
   async function rate(r) {
-    if (busy) return;
+    if (busy || !session?.[index]) return;
     setBusy(true);
     try {
       const id = session[index];
@@ -136,10 +141,10 @@ export default function Flashcards() {
     }
   }
   useEffect(() => {
-    if (!session) return;
+    if (!session || index >= session.length) return;
     function key(e) {
-      if (e.target.matches("input,textarea,select") || busy) return;
-      if (e.code === "Space") {
+      if (e.repeat || e.target.matches("input,textarea,select") || busy) return;
+      if (e.code === "Space" && !e.target.closest("button,a")) {
         e.preventDefault();
         setFlipped((f) => !f);
       }
@@ -274,7 +279,7 @@ export default function Flashcards() {
                 </Button>
                 <Button
                   onClick={() => start(deck, true)}
-                  disabled={!cards.some((c) => isDue(c))}
+                  disabled={!cards.some((c) => isDue(c, now))}
                 >
                   Review due cards
                 </Button>
@@ -286,7 +291,7 @@ export default function Flashcards() {
               {decks.map((d) => {
                 const subject = data.subjects.find((s) => s.id === d.subjectId),
                   cs = data.cards.filter((c) => c.deckId === d.id),
-                  due = cs.filter((c) => isDue(c)).length;
+                  due = cs.filter((c) => isDue(c, now)).length;
                 return (
                   <article className="subject-card" key={d.id}>
                     <div className="row between">
@@ -339,7 +344,21 @@ export default function Flashcards() {
             </div>
           ) : (
             <>
+              <details className="study-help">
+                <summary>New to flashcards?</summary>
+                <p>
+                  Read the question and try to answer from memory. Reveal the
+                  answer, then choose Again, Hard, Good, or Easy. Recall
+                  schedules your next review automatically. “Again” returns in
+                  about a minute. You can write cards yourself or generate them
+                  from your materials.
+                </p>
+              </details>
               <div className="row wrap deck-tools">
+                <Button secondary onClick={() => setGenerating(true)}>
+                  <Sparkles size={15} />
+                  Generate with AI
+                </Button>
                 <Button secondary onClick={() => setEditing(deck)}>
                   <Pencil size={15} />
                   Edit deck
@@ -418,7 +437,7 @@ export default function Flashcards() {
                         {c.tags && <span className="tiny muted">{c.tags}</span>}
                         <div className="tiny muted">
                           {c.difficulty} ·{" "}
-                          {isDue(c)
+                          {isDue(c, now)
                             ? "Ready to review"
                             : `Due ${new Date(c.due).toLocaleDateString()}`}{" "}
                           · {c.history.length} reviews
@@ -455,6 +474,9 @@ export default function Flashcards() {
             </>
           )}
         </>
+      )}
+      {generating && deck && (
+        <AIFlashcards deck={deck} onClose={() => setGenerating(false)} />
       )}
       {editing && (
         <Modal
@@ -570,6 +592,7 @@ export default function Flashcards() {
                 </span>
                 <button
                   className="text-link"
+                  disabled={busy}
                   onClick={() => {
                     setSession((s) => [
                       ...s.slice(0, index),
@@ -594,6 +617,7 @@ export default function Flashcards() {
                 initial={{ opacity: 0, rotateX: -8 }}
                 animate={{ opacity: 1, rotateX: 0 }}
                 className="study-card"
+                disabled={busy}
                 onClick={() => setFlipped(!flipped)}
               >
                 <span className="eyebrow">
@@ -601,6 +625,12 @@ export default function Flashcards() {
                 </span>
                 <h2>{flipped ? active?.back : active?.front}</h2>
                 {flipped && active?.explanation && <p>{active.explanation}</p>}
+                {flipped && active?.source && (
+                  <small className="muted">
+                    {active.source}
+                    {active.fileName ? ` · ${active.fileName}` : ""}
+                  </small>
+                )}
                 <span className="muted tiny">
                   <RotateCcw size={13} />
                   Click or press Space to flip
@@ -631,7 +661,7 @@ export default function Flashcards() {
               <div className="row between section-gap">
                 <Button
                   secondary
-                  disabled={index === 0}
+                  disabled={busy || index === 0}
                   onClick={() => {
                     setIndex((i) => i - 1);
                     setFlipped(false);
@@ -642,6 +672,7 @@ export default function Flashcards() {
                 </Button>
                 <Button
                   secondary
+                  disabled={busy}
                   onClick={() => {
                     setIndex((i) => i + 1);
                     setFlipped(false);

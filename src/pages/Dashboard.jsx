@@ -14,12 +14,15 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from "recharts";
 import { useStore } from "../context";
 import { PageHead, Empty } from "../components/UI";
 import { isDue } from "../utils/spacedRepetition";
+import { useReviewClock } from "../hooks/useReviewClock";
 export default function Dashboard() {
   const { data } = useStore();
+  const now = useReviewClock();
+  const attempts = data.attempts || [];
   const navigate = useNavigate();
   const reviews = data.cards.flatMap((c) => c.history),
-    due = data.cards.filter((c) => isDue(c)).length;
-  const today = new Date();
+    due = data.cards.filter((c) => isDue(c, now)).length;
+  const today = new Date(now);
   const dayKey = (d) => new Date(d).toLocaleDateString("en-CA");
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
@@ -30,14 +33,13 @@ export default function Dashboard() {
     };
   });
   let streak = 0;
-  const dates = new Set(reviews.map((r) => dayKey(r.at)));
+  const dates = new Set([...reviews, ...attempts].map((r) => dayKey(r.at)));
   const day = new Date();
   if (!dates.has(dayKey(day))) day.setDate(day.getDate() - 1);
   while (dates.has(dayKey(day))) {
     streak++;
     day.setDate(day.getDate() - 1);
   }
-  const attempts = data.attempts || [];
   const avg = attempts.length
     ? Math.round(attempts.reduce((s, a) => s + a.score, 0) / attempts.length)
     : null;
@@ -143,7 +145,7 @@ export default function Dashboard() {
           <p className="muted tiny">A little repetition goes a long way.</p>
           {data.decks
             .filter((d) =>
-              data.cards.some((c) => c.deckId === d.id && isDue(c)),
+              data.cards.some((c) => c.deckId === d.id && isDue(c, now)),
             )
             .slice(0, 4)
             .map((d) => {
@@ -165,8 +167,9 @@ export default function Dashboard() {
                     <span className="tiny muted">
                       {s.name} ·{" "}
                       {
-                        data.cards.filter((c) => c.deckId === d.id && isDue(c))
-                          .length
+                        data.cards.filter(
+                          (c) => c.deckId === d.id && isDue(c, now),
+                        ).length
                       }{" "}
                       cards due
                     </span>

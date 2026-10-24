@@ -34,6 +34,12 @@ export function validateData(data) {
       throw new Error("Invalid deck or missing subject.");
   for (const c of data.cards) {
     if (
+      (c.source !== undefined && !text(c.source, 80)) ||
+      (c.evidence !== undefined && !text(c.evidence, 2000)) ||
+      (c.fileName !== undefined && !text(c.fileName, 255))
+    )
+      throw new Error("Invalid flashcard source metadata.");
+    if (
       !text(c.front) ||
       !text(c.back) ||
       !data.decks.some((d) => d.id === c.deckId) ||

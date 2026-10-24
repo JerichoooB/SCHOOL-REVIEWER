@@ -72,7 +72,7 @@ export default function Settings() {
         <h2>Your data, your control</h2>
         <p className="muted">
           Study data is stored in this browser. Export regular backups to keep
-          it safe. PDF/PPTX text is extracted locally; AI quiz generation sends
+          it safe. PDF/PPTX text is extracted locally; AI generation sends
           extracted text to Google Gemini only after you confirm.
         </p>
         <div className="row wrap">

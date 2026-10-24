@@ -44,7 +44,10 @@ export function Modal({ title, children, onClose }) {
       ref={ref}
       className="modal"
       aria-labelledby={titleId}
-      onCancel={onClose}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
       onClick={(e) => {
         if (e.target === ref.current) onClose();
       }}

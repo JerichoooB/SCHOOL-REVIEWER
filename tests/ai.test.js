@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHandler } from "../api/generate-quiz.js";
 import {
   validateQuestions,
+  validateFlashcards,
   validateInput,
   selectFlashModel,
   generationSettings,
@@ -668,4 +669,54 @@ test("quota errors, invalid requests and ambiguous network failures are not repl
   });
   assert.equal(result.data.code, "UNEXPECTED_PROVIDER_RESPONSE");
   assert.match(result.data.error, /HTTP 418/);
+});
+
+test("AI flashcards request direct recall questions and verify source-grounded answers", async () => {
+  const card = {
+    front: "What is the purpose of structured database tables?",
+    back: "They organize information for efficient retrieval.",
+    explanation:
+      "Tables give information a structure that makes retrieval efficient.",
+    source: "Page 1",
+    evidence,
+  };
+  const result = await invoke({
+    body: { sections, count: 3, kind: "flashcards" },
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      assert.match(
+        body.systemInstruction.parts[0].text,
+        /No multiple-choice options/,
+      );
+      assert.ok(body.generationConfig.responseSchema.properties.cards);
+      assert.equal(
+        body.generationConfig.responseSchema.properties.questions,
+        undefined,
+      );
+      return response({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: JSON.stringify({ cards: [card] }) }] },
+          },
+        ],
+      });
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.cards, [card]);
+  assert.equal(result.data.questions, undefined);
+  assert.throws(() =>
+    validateFlashcards(
+      {
+        cards: [
+          { ...card, evidence: "This quotation is entirely fabricated." },
+        ],
+      },
+      sections,
+      3,
+    ),
+  );
+  assert.throws(() => validateFlashcards({ cards: [card, card] }, sections, 3));
+  assert.throws(() => validateInput({ sections, count: 3, kind: "unknown" }));
 });
