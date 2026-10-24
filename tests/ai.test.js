@@ -5,6 +5,7 @@ import {
   validateQuestions,
   validateInput,
   selectFlashModel,
+  generationSettings,
 } from "../server/aiQuiz.js";
 import { emptyData, validateData } from "../src/services/database.js";
 const evidence =
@@ -480,4 +481,66 @@ test("model-list errors and empty results stop before generation with actionable
       ),
   });
   assert.equal(denied.data.code, "API_KEY_INVALID");
+});
+
+test("normal quizzes prefer Flash Lite and avoid unnecessary thinking work", () => {
+  const entry = (name) => ({
+    name: "models/" + name,
+    supportedGenerationMethods: ["generateContent"],
+  });
+  assert.equal(
+    selectFlashModel([
+      entry("gemini-3.1-flash"),
+      entry("gemini-2.5-flash-lite"),
+    ]),
+    "gemini-2.5-flash-lite",
+  );
+  assert.deepEqual(generationSettings("gemini-2.5-flash", 10).thinkingConfig, {
+    thinkingBudget: 0,
+  });
+  assert.deepEqual(
+    generationSettings("gemini-3.1-flash-lite", 10).thinkingConfig,
+    { thinkingLevel: "minimal" },
+  );
+  assert.equal(
+    generationSettings("gemini-2.0-flash", 10).thinkingConfig,
+    undefined,
+  );
+  assert.ok(
+    generationSettings("gemini-2.5-flash-lite", 10).maxOutputTokens < 8192,
+  );
+});
+test("warm requests reuse discovery while different API keys have separate model caches", async () => {
+  let lookups = 0,
+    generations = 0;
+  const fetchImpl = async (url, options) => {
+    if (options.method === "GET") {
+      lookups++;
+      return response({
+        models: [
+          {
+            name: "models/gemini-3.1-flash-lite",
+            supportedGenerationMethods: ["generateContent"],
+          },
+        ],
+      });
+    }
+    generations++;
+    return response(providerResult([question]));
+  };
+  const env = { GEMINI_API_KEY: "cache-test-key-not-real" };
+  assert.equal((await invoke({ env, fetchImpl })).status, 200);
+  assert.equal((await invoke({ env, fetchImpl })).status, 200);
+  assert.equal(lookups, 1);
+  assert.equal(generations, 2);
+  assert.equal(
+    (
+      await invoke({
+        env: { GEMINI_API_KEY: "another-cache-test-key-not-real" },
+        fetchImpl,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(lookups, 2);
 });

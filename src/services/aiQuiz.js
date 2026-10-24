@@ -11,12 +11,12 @@ export async function generateAIQuiz(sections, count) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ sections, count }),
-      signal: AbortSignal.timeout(55000),
+      signal: AbortSignal.timeout(140000),
     });
   } catch (error) {
     throw new Error(
       error.name === "TimeoutError"
-        ? "Generation timed out. Try fewer questions."
+        ? "Gemini is taking longer than expected. No quiz was saved. Please try again later."
         : "Could not reach AI generation. Check your connection and try again.",
     );
   }
@@ -24,6 +24,10 @@ export async function generateAIQuiz(sections, count) {
   try {
     result = await response.json();
   } catch {
+    if (response.status === 504)
+      throw new Error(
+        "The server reached its generation time limit. No quiz was saved. Please try again later.",
+      );
     throw new Error(
       "AI generation needs the Vercel server function. Use the deployed app or run vercel dev for local AI testing.",
     );

@@ -57,7 +57,7 @@ export function createHandler({
       if (error.name === "TimeoutError" || error.name === "AbortError")
         return res.status(504).json({
           error:
-            "Generation timed out. Try a shorter chapter or fewer questions.",
+            "Gemini did not finish within the allowed time. No quiz was saved. Please try again later.",
         });
       return res.status(error.status || 502).json({
         error: error.status

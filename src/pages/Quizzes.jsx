@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Upload,
   FileText,
@@ -25,7 +25,17 @@ export default function Quizzes() {
     [result, setResult] = useState(null),
     [material, setMaterial] = useState(null),
     [questionCount, setQuestionCount] = useState(10),
-    [consent, setConsent] = useState(false);
+    [consent, setConsent] = useState(false),
+    [generationStarted, setGenerationStarted] = useState(null),
+    [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!generationStarted) return;
+    const tick = () =>
+      setElapsed(Math.floor((Date.now() - generationStarted) / 1000));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [generationStarted]);
   async function upload(e) {
     const file = e.target.files[0];
     e.target.value = "";
@@ -56,6 +66,8 @@ export default function Quizzes() {
   async function generate(e) {
     e.preventDefault();
     if (busy || !consent) return;
+    setGenerationStarted(Date.now());
+    setElapsed(0);
     setBusy(true);
     try {
       const questions = await generateAIQuiz(material.sections, questionCount);
@@ -72,6 +84,7 @@ export default function Quizzes() {
       setError(e.message);
     } finally {
       setBusy(false);
+      setGenerationStarted(null);
     }
   }
   async function save(e) {
@@ -172,7 +185,11 @@ export default function Quizzes() {
         </p>
         <label className={`button ${busy ? "disabled" : ""}`}>
           <Upload size={17} />
-          {busy ? "Reading your document…" : "Choose PDF or PowerPoint"}
+          {busy
+            ? generationStarted
+              ? "Generating your quiz…"
+              : "Reading your document…"
+            : "Choose PDF or PowerPoint"}
           <input
             disabled={busy}
             className="sr-only"
@@ -236,6 +253,14 @@ export default function Quizzes() {
                 Read Gemini terms
               </a>
             </p>
+            {generationStarted && (
+              <p className="muted tiny" role="status" aria-live="off">
+                Generating {questionCount} questions · {elapsed}s elapsed.{" "}
+                {elapsed >= 20
+                  ? "Gemini is still responding; this can take longer during busy periods."
+                  : "Preparing questions, answer choices, and source checks."}
+              </p>
+            )}
             <div className="row wrap section-gap">
               <Button type="submit" disabled={busy || !consent}>
                 {busy
